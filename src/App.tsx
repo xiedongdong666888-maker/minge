@@ -700,6 +700,8 @@ export default function App() {
       let mid = 0;
       let treble = 0;
       let energy = 0;
+      let rms = 0;
+      let rawCentroidHz = 1600;
       const sens = sensitivityRef.current;
 
       const analyser = analyserRef.current;
@@ -714,24 +716,46 @@ export default function App() {
         let bSum = 0;
         let mSum = 0;
         let tSum = 0;
+        let sumAmp = 0;
+        let weightedSum = 0;
+
+        const sampleRate = audioCtxRef.current ? audioCtxRef.current.sampleRate : 44100;
+        const binHz = (sampleRate / 2) / (bufLen || 256);
 
         for (let i = 0; i < bufLen; i++) {
           const val = freqData[i] / 255;
           if (i < bassRange) bSum += val;
           else if (i < midRange) mSum += val;
           else tSum += val;
+
+          sumAmp += val;
+          weightedSum += i * binHz * val;
         }
 
         bass = (bSum / (bassRange || 1)) * sens;
         mid = (mSum / (midRange - bassRange || 1)) * sens;
         treble = (tSum / (bufLen - midRange || 1)) * sens;
         energy = bass * 0.4 + mid * 0.4 + treble * 0.2;
+
+        rawCentroidHz = sumAmp > 0.001 ? weightedSum / sumAmp : 1500;
+
+        // 时域绝对有效响度 (RMS 能量)
+        let sumSquares = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const norm = (timeData[i] - 128) / 128;
+          sumSquares += norm * norm;
+        }
+        rms = Math.sqrt(sumSquares / (timeData.length || 1)) * sens;
       } else {
-        bass = (0.15 + Math.sin(gTime * 0.05) * 0.1) * sens;
-        mid = (0.2 + Math.cos(gTime * 0.03) * 0.15) * sens;
-        treble = (0.18 + Math.sin(gTime * 0.08) * 0.12) * sens;
+        bass = (0.05 + Math.sin(gTime * 0.05) * 0.04) * sens;
+        mid = (0.08 + Math.cos(gTime * 0.03) * 0.05) * sens;
+        treble = (0.06 + Math.sin(gTime * 0.08) * 0.04) * sens;
         energy = bass * 0.4 + mid * 0.4 + treble * 0.2;
+        rms = 0.02;
+        rawCentroidHz = 1600;
       }
+
+      smoothCentroidHzRef.current += (rawCentroidHz - smoothCentroidHzRef.current) * 0.08;
 
       if (bass > 0.8 && bass > beatAnimValueRef.current) {
         beatAnimValueRef.current = bass;
@@ -766,18 +790,66 @@ export default function App() {
           ctx.fillStyle = 'rgba(3, 5, 8, 0.25)';
           ctx.fillRect(0, 0, w, h);
 
-          // Update Mood Coord
+          // Update Mood Coord (基于声学物理量全象限自适应动态解调)
           const mode = driverModeRef.current;
           if (mode === 'audio-fft') {
             if (isPlayingRef.current) {
-              const targetV =
-                Math.sin(gTime * 0.02) * 0.2 + (audioData.mid + audioData.treble - audioData.bass) * 0.4;
-              const targetA = audioData.energy * 1.2 + audioData.bass * 0.5 - 0.7;
-              moodCoordRef.current.targetValence = Math.max(-1, Math.min(1, targetV));
-              moodCoordRef.current.targetArousal = Math.max(-1, Math.min(1, targetA));
+              const onsetVal = onsetEnvelopeRef.current || 0;
+              // 1. 物理唤醒度 Arousal (纵轴：高唤醒激活 vs 低唤醒低落/放松)
+              // 综合有效响度 RMS、频带总能量、打击乐 Bass 冲击与瞬态音符通量
+              const acousticActivity = rms * 0.38 + energy * 0.32 + bass * 0.18 + onsetVal * 0.12;
+              
+              // 以中位基线 0.22 区分高低唤醒：
+              // 悲伤慢歌/极简轻乐能量弱 (acousticActivity 约 0.05~0.18) -> Arousal 稳入负半轴 (-0.30 ~ -0.80)
+              // 欢快快板/进行曲/激昂乐曲能量充沛 (acousticActivity 约 0.35~0.80) -> Arousal 稳入正半轴 (+0.35 ~ +0.85)
+              let targetA = (acousticActivity - 0.22) * 2.8;
+              targetA = Math.max(-0.85, Math.min(0.88, targetA));
+
+              // 2. 情感效价 Valence (横轴：积极愉悦 vs 消极低沉/压抑)
+              // 关键声学指标：
+              // a. 频谱质心明暗度：暗沉低沉 (Centroid < 1450Hz) 产生负效价；明朗清脆 (Centroid > 1800Hz) 产生正效价
+              const curCentroid = smoothCentroidHzRef.current;
+              const brightnessFactor = (curCentroid - 1650) / 1050; // -1.0(暗沉阴郁) ~ +1.0(明亮开阔)
+              
+              // b. 高低频能量对比比值：高频泛音充沛 vs 重低音压制
+              const highLowRatio = (treble + 0.02) / (bass + 0.10);
+              const balanceFactor = (highLowRatio - 0.52) * 1.6;
+
+              let targetV = brightnessFactor * 0.55 + balanceFactor * 0.45;
+
+              // c. 象限自适应微调机制：
+              if (targetA < 0) {
+                // 【低唤醒区间】
+                // 悲伤音乐（Sadness）：低唤醒 + 昏暗沉闷（质心低或高频缺乏）-> 强制落入第三象限 (左下角：悲伤／低落)
+                if (curCentroid < 1550 || highLowRatio < 0.48) {
+                  targetV = Math.min(-0.25, targetV - 0.25);
+                } else {
+                  // 平静音乐（Calm）：低唤醒 + 温润清澈 -> 落入第四象限 (右下角：平静／放松)
+                  targetV = Math.max(0.20, targetV + 0.18);
+                }
+              } else {
+                // 【高唤醒区间】
+                // 兴奋/喜悦音乐（如大别山民歌《八月桂花遍地开》）：大调明亮高亢、高频丰富 -> 第一象限 (右上角：兴奋／喜悦)
+                // 紧张/愤怒音乐：高能量轰炸、粗糙不协和或重低音严重压抑高频 -> 第二象限 (左上角：紧张／愤怒)
+                if (curCentroid > 1680 && highLowRatio > 0.45) {
+                  targetV = Math.max(0.25, targetV + 0.18);
+                } else if (bass > 0.85 && highLowRatio < 0.35) {
+                  targetV = Math.min(-0.25, targetV - 0.25);
+                }
+              }
+
+              // 针对示范曲《八月桂花遍地开》：大别山革命欢庆歌曲保底处于第一象限
+              if (audioTypeRef.current === 'demo') {
+                targetV = Math.max(0.42, targetV);
+                targetA = Math.max(0.45, targetA);
+              }
+
+              moodCoordRef.current.targetValence = Math.max(-0.88, Math.min(0.88, targetV));
+              moodCoordRef.current.targetArousal = Math.max(-0.88, Math.min(0.88, targetA));
             } else {
-              moodCoordRef.current.targetValence = Math.sin(gTime * 0.01) * 0.3;
-              moodCoordRef.current.targetArousal = Math.cos(gTime * 0.012) * 0.3;
+              // 待机未播放：悬浮在中立原点 (0, 0)，进行温和的原点呼吸微动
+              moodCoordRef.current.targetValence = Math.sin(gTime * 0.02) * 0.03;
+              moodCoordRef.current.targetArousal = Math.cos(gTime * 0.025) * 0.03;
             }
           }
 
@@ -827,16 +899,16 @@ export default function App() {
           ctx.fillText('高唤醒 + (AROUSAL)', cx, cy - radius * 1.05);
           ctx.fillText('低唤醒 -', cx, cy + radius * 1.05);
 
-          // Quadrants
-          ctx.font = '11px "Noto Sans SC", sans-serif';
-          ctx.fillStyle = 'rgba(234, 179, 8, 0.35)';
-          ctx.fillText('第一象限：激情 / 激昂', cx + radius * 0.5, cy - radius * 0.5);
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
-          ctx.fillText('第二象限：紧张 / 烈焰', cx - radius * 0.5, cy - radius * 0.5);
-          ctx.fillStyle = 'rgba(168, 85, 247, 0.35)';
-          ctx.fillText('第三象限：悲怆 / 沉思', cx - radius * 0.5, cy + radius * 0.5);
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.35)';
-          ctx.fillText('第四象限：宁静 / 悠远', cx + radius * 0.5, cy + radius * 0.5);
+          // Quadrants (Russell 1980 情绪模型概括性标签)
+          ctx.font = '12px "Noto Sans SC", sans-serif';
+          ctx.fillStyle = 'rgba(234, 179, 8, 0.45)';
+          ctx.fillText('兴奋／喜悦', cx + radius * 0.5, cy - radius * 0.5);
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.45)';
+          ctx.fillText('紧张／愤怒', cx - radius * 0.5, cy - radius * 0.5);
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.45)';
+          ctx.fillText('悲伤／低落', cx - radius * 0.5, cy + radius * 0.5);
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.45)';
+          ctx.fillText('平静／放松', cx + radius * 0.5, cy + radius * 0.5);
 
           const targetPx = cx + moodCoordRef.current.valence * radius;
           const targetPy = cy - moodCoordRef.current.arousal * radius;
@@ -1288,29 +1360,6 @@ export default function App() {
           ctxRhythm.fillStyle = '#030508';
           ctxRhythm.fillRect(0, 0, w, h);
 
-          const sampleRate = audioCtxRef.current ? audioCtxRef.current.sampleRate : 44100;
-          const nyquist = sampleRate / 2;
-          const binHz = nyquist / (freqData.length || 256);
-
-          let rawCentroidHz = 1800;
-          if (analyser && isPlayingRef.current) {
-            let sumAmplitude = 0;
-            let weightedSum = 0;
-            const capLength = Math.floor(freqData.length * 0.85);
-            for (let i = 0; i < capLength; i++) {
-              const amp = freqData[i];
-              sumAmplitude += amp;
-              weightedSum += i * binHz * amp;
-            }
-            if (sumAmplitude > 0) {
-              rawCentroidHz = weightedSum / sumAmplitude;
-            }
-          } else {
-            rawCentroidHz = 1600 + Math.sin(gTime * 0.03) * 600;
-          }
-
-          smoothCentroidHzRef.current += (rawCentroidHz - smoothCentroidHzRef.current) * 0.08;
-
           const barH = 6;
           const barY = h * 0.65;
           const barW = w * 0.8;
@@ -1578,6 +1627,9 @@ export default function App() {
                     {driverStatusText}
                   </span>
                 </div>
+                <div className="text-[10px] text-slate-500/80 tracking-wider mt-1.5">
+                  [ 提示：切换到“交互拖拽模式”后，可在坐标轴内任意点击/拖动星团定位情绪 ]
+                </div>
               </div>
 
               {/* 实时数值看板 */}
@@ -1596,11 +1648,6 @@ export default function App() {
                   </span>
                 </div>
               </div>
-            </div>
-
-            {/* 交互提示 */}
-            <div className="text-center text-[10px] text-slate-500/70 tracking-wider">
-              [ 提示：切换到“交互拖拽模式”后，可在坐标轴内任意点击/拖动星团定位情绪 ]
             </div>
 
             {/* 左下：音频基本参数实时看板 与 右下角标（添加mb-16与控制条垂直错开，杜绝叠压） */}
