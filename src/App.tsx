@@ -74,6 +74,10 @@ function getHoloColor(rawNormX: number, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+// 示范音乐文件源（取自 minge 目录）
+const DEMO_AUDIO_URL = '/minge/' + encodeURIComponent('大别山民歌《八月桂花遍地开》.mp3');
+const DEMO_AUDIO_FALLBACK = '/' + encodeURIComponent('大别山民歌《八月桂花遍地开》.mp3');
+
 // 凝聚态情绪粒子类
 class MoodSwarmParticle {
   angle: number = 0;
@@ -202,10 +206,9 @@ export default function App() {
   // States
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [driverMode, setDriverMode] = useState<DriverMode>('audio-fft');
-  const [preset, setPreset] = useState<PresetKey>('red-gold');
-  const [trackTitle, setTrackTitle] = useState<string>('{ 八月桂花遍地开 }');
+  const [trackTitle, setTrackTitle] = useState<string>('{ 大别山民歌《八月桂花遍地开》 }');
   const [trackSubtitle, setTrackSubtitle] = useState<string>(
-    '大别山红色旋律与革命情怀的数字化解调'
+    '大别山经典民歌原声 · 待机就绪（点击播放示范音乐或上传本地音频）'
   );
   const [liveStatus, setLiveStatus] = useState<string>('STANDBY');
   const [driverStatusText, setDriverStatusText] = useState<string>('罗素情绪环解调中...');
@@ -232,6 +235,8 @@ export default function App() {
   const gainNodeRef = useRef<GainNode | null>(null);
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const uploadedAudioRef = useRef<HTMLAudioElement | null>(null);
+  const demoAudioRef = useRef<HTMLAudioElement | null>(null);
+  const demoSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const audioTypeRef = useRef<'none' | 'demo' | 'file'>('none');
   const isPlayingRef = useRef<boolean>(false);
   const driverModeRef = useRef<DriverMode>('audio-fft');
@@ -291,9 +296,6 @@ export default function App() {
     driverModeRef.current = driverMode;
   }, [driverMode]);
   useEffect(() => {
-    presetRef.current = preset;
-  }, [preset]);
-  useEffect(() => {
     volumeRef.current = volume;
     if (gainNodeRef.current && audioCtxRef.current) {
       gainNodeRef.current.gain.setValueAtTime(volume, audioCtxRef.current.currentTime);
@@ -344,9 +346,12 @@ export default function App() {
       clearTimeout(synthIntervalRef.current as NodeJS.Timeout);
       synthIntervalRef.current = null;
     }
+    if (demoAudioRef.current) {
+      demoAudioRef.current.pause();
+    }
     if (audioTypeRef.current === 'demo') {
       setIsPlaying(false);
-      setLiveStatus('STANDBY');
+      setLiveStatus('PAUSED');
     }
   }, []);
 
@@ -475,35 +480,63 @@ export default function App() {
     }
   }, []);
 
-  // Play Demo Track
+  // Play Demo Track (以 minge 文件夹中的大别山民歌《八月桂花遍地开》音频为示范音乐)
   const playDemoTrack = useCallback(() => {
     initAudio();
     if (uploadedAudioRef.current) {
       uploadedAudioRef.current.pause();
     }
+    if (synthIntervalRef.current) {
+      clearTimeout(synthIntervalRef.current as NodeJS.Timeout);
+      synthIntervalRef.current = null;
+    }
+
     audioTypeRef.current = 'demo';
     setIsPlaying(true);
     setLiveStatus('RED TUNES');
-    setTrackTitle('{ 八月桂花遍地开 · 红色数字化解调 }');
-    setTrackSubtitle('由 Web Audio 生成的大别山经典民歌程序化电子打击乐谱');
+    setTrackTitle('{ 大别山民歌《八月桂花遍地开》 }');
+    setTrackSubtitle('大别山经典红色民歌原声 · 罗素情绪空间实时解调分析');
 
-    const stepTime = 60 / synthTempo / 4;
-    const ctx = audioCtxRef.current!;
-    let nextStepTime = ctx.currentTime;
+    let audioEl = demoAudioRef.current;
+    if (!audioEl) {
+      audioEl = new Audio();
+      audioEl.src = DEMO_AUDIO_URL;
+      audioEl.crossOrigin = 'anonymous';
+      audioEl.loop = true;
+      demoAudioRef.current = audioEl;
 
-    function scheduler() {
-      if (!audioCtxRef.current) return;
-      while (nextStepTime < audioCtxRef.current.currentTime + 0.1) {
-        triggerSynthStep(synthStepRef.current, nextStepTime);
-        synthStepRef.current = (synthStepRef.current + 1) % 16;
-        nextStepTime += stepTime;
-      }
-      if (isPlayingRef.current && audioTypeRef.current === 'demo') {
-        synthIntervalRef.current = setTimeout(scheduler, 25);
+      audioEl.onended = () => {
+        setIsPlaying(false);
+        setLiveStatus('PAUSED');
+      };
+      audioEl.onerror = () => {
+        if (audioEl && audioEl.src !== DEMO_AUDIO_FALLBACK) {
+          audioEl.src = DEMO_AUDIO_FALLBACK;
+          audioEl.play().catch(console.warn);
+        }
+      };
+    }
+
+    // 接入 Web Audio API 频谱分析节点
+    if (!demoSourceNodeRef.current && audioCtxRef.current && gainNodeRef.current) {
+      try {
+        demoSourceNodeRef.current = audioCtxRef.current.createMediaElementSource(audioEl);
+        demoSourceNodeRef.current.connect(gainNodeRef.current);
+      } catch (err) {
+        console.warn('Demo audio source node connect notice:', err);
       }
     }
-    scheduler();
-  }, [initAudio, triggerSynthStep]);
+
+    audioEl
+      .play()
+      .then(() => {
+        triggerToast('正在播放示范音乐：大别山民歌《八月桂花遍地开》');
+      })
+      .catch((err) => {
+        console.warn('Playback interrupted or requires user interaction:', err);
+        triggerToast('请点击下方播放键开始播放示范民歌');
+      });
+  }, [initAudio, triggerToast]);
 
   // Toggle Play / Pause
   const handleTogglePlay = useCallback(() => {
@@ -1385,6 +1418,18 @@ export default function App() {
     return () => window.removeEventListener('click', unlockAudio);
   }, []);
 
+  // Spacebar play/pause toggle
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && (e.target as HTMLElement)?.tagName !== 'INPUT') {
+        e.preventDefault();
+        handleTogglePlay();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleTogglePlay]);
+
   return (
     <div id="app-root" className="text-slate-200 min-h-screen flex flex-col grid-bg select-none">
       {/* 顶栏 */}
@@ -1437,34 +1482,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* 视觉预设 */}
-          <div className="flex items-center space-x-2 bg-slate-900/80 px-3 py-1.5 rounded border border-slate-800 text-xs">
-            <span className="text-slate-500">预设:</span>
-            <select
-              id="preset-select"
-              value={preset}
-              onChange={(e) => {
-                const val = e.target.value as PresetKey;
-                setPreset(val);
-                triggerToast(`已切换至预设: ${e.target.options[e.target.selectedIndex].text}`);
-              }}
-              className="bg-transparent text-yellow-500 font-medium focus:outline-none cursor-pointer"
-            >
-              <option value="red-gold" className="bg-slate-900 text-slate-200">
-                燎原星火 (烈焰金红)
-              </option>
-              <option value="green-mountain" className="bg-slate-900 text-slate-200">
-                大别群山 (革命青绿)
-              </option>
-              <option value="cyan-purple" className="bg-slate-900 text-slate-200">
-                桂花霓虹 (青紫梦幻)
-              </option>
-              <option value="monochrome" className="bg-slate-900 text-slate-200">
-                岁月丰碑 (水墨黑白)
-              </option>
-            </select>
-          </div>
-
           {/* 音频来源 */}
           <button
             id="btn-demo-play"
@@ -1479,7 +1496,7 @@ export default function App() {
           >
             <Music className="w-3.5 h-3.5" />
             <span id="demo-btn-text">
-              {isPlaying && audioTypeRef.current === 'demo' ? '停止示范音乐' : '播放示范音乐'}
+              {isPlaying && audioTypeRef.current === 'demo' ? '暂停示范民歌' : '播放示范民歌 (八月桂花遍地开)'}
             </span>
           </button>
 
