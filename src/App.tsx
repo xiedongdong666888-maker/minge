@@ -97,12 +97,12 @@ class MoodSwarmParticle {
 
   reset(initX: number, initY: number) {
     this.angle = Math.random() * Math.PI * 2;
-    this.radius = Math.random() * 80 + 10;
+    this.radius = Math.random() * 95 + 12;
     this.x = initX + Math.cos(this.angle) * this.radius;
     this.y = initY + Math.sin(this.angle) * this.radius;
     this.vx = (Math.random() - 0.5) * 1.5;
     this.vy = (Math.random() - 0.5) * 1.5;
-    this.size = Math.random() * 2.2 + 0.6;
+    this.size = Math.random() * 3.4 + 1.2;
     this.life = Math.random() * 100 + 100;
     this.maxLife = this.life;
     this.speedMult = Math.random() * 0.03 + 0.01;
@@ -113,7 +113,7 @@ class MoodSwarmParticle {
     if (this.life <= 0) {
       this.life = Math.random() * 100 + 100;
       this.maxLife = this.life;
-      this.radius = Math.random() * 60 + 5;
+      this.radius = Math.random() * 85 + 8;
     }
 
     const dx = targetX - this.x;
@@ -194,6 +194,35 @@ declare global {
   }
 }
 
+// 象限几何视口计算工具：根据模式提供全景或第一象限大幅放大几何参数，严格避让顶部标题区
+function getQuadrantViewport(w: number, h: number, mode: 'q1-focus' | 'all') {
+  // 顶部安全避让线（左上角标题与状态卡片高度约 80~95px，预留 128px 纯净空高）
+  const topSafeY = 128;
+  const bottomMargin = 55;
+
+  if (mode === 'q1-focus') {
+    // 第一象限放大视口：原点置于左下偏内侧，X留足负轴刻度余量，Y留足底部控制条余量
+    const cx = Math.max(85, Math.min(140, w * 0.12));
+    const cy = Math.max(topSafeY + 120, h - bottomMargin);
+
+    // 计算 Y 方向最大可用半径：确保最高点 cy - radius * 1.06 严格 >= topSafeY，彻底不被顶部标题遮挡
+    const maxRadiusY = (cy - topSafeY) / 1.06;
+    // 计算 X 方向最大可用半径：确保右侧保留余量
+    const maxRadiusX = (w - cx - 55) / 1.06;
+
+    const radius = Math.max(90, Math.min(maxRadiusX, maxRadiusY));
+    return { cx, cy, radius };
+  } else {
+    // 全景四象限标准视口：同样保证最高点避让顶部标题
+    const cx = w / 2;
+    // 原点垂直居中略偏下，让顶部有足够呼吸感避开标题
+    const cy = Math.max(topSafeY + 110, (h + topSafeY - bottomMargin) / 2);
+    const maxRadiusY = (cy - topSafeY) / 1.15;
+    const radius = Math.max(80, Math.min(cx * 0.65, maxRadiusY));
+    return { cx, cy, radius };
+  }
+}
+
 export default function App() {
   // DOM Refs
   const mainCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -206,12 +235,14 @@ export default function App() {
   // States
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [driverMode, setDriverMode] = useState<DriverMode>('audio-fft');
+  const [viewZoomMode, setViewZoomMode] = useState<'q1-focus' | 'all'>('q1-focus');
+  const viewZoomModeRef = useRef<'q1-focus' | 'all'>('q1-focus');
   const [trackTitle, setTrackTitle] = useState<string>('{ 大别山民歌《八月桂花遍地开》 }');
   const [trackSubtitle, setTrackSubtitle] = useState<string>(
     '大别山经典民歌原声 · 待机就绪（点击播放示范音乐或上传本地音频）'
   );
   const [liveStatus, setLiveStatus] = useState<string>('STANDBY');
-  const [driverStatusText, setDriverStatusText] = useState<string>('罗素情绪环解调中...');
+  const [driverStatusText, setDriverStatusText] = useState<string>('情绪环解调中...');
   const [toastMessage, setToastMessage] = useState<string>('');
   const [showToast, setShowToast] = useState<boolean>(false);
   const [fpsText, setFpsText] = useState<string>('60 FPS');
@@ -495,7 +526,7 @@ export default function App() {
     setIsPlaying(true);
     setLiveStatus('RED TUNES');
     setTrackTitle('{ 大别山民歌《八月桂花遍地开》 }');
-    setTrackSubtitle('大别山经典红色民歌原声 · 罗素情绪空间实时解调分析');
+    setTrackSubtitle('大别山经典红色民歌原声 · 情绪空间实时解调分析');
 
     let audioEl = demoAudioRef.current;
     if (!audioEl) {
@@ -620,7 +651,7 @@ export default function App() {
 
       const cleanedTitle = file.name.replace(/\.[^/.]+$/, '');
       setTrackTitle(`{ ${cleanedTitle} }`);
-      setTrackSubtitle('正在通过罗素象限数轴解调仪解析经典旋律包络');
+      setTrackSubtitle('正在通过象限数轴解调仪解析经典旋律包络');
       triggerToast(`成功解析红色民歌音频: ${cleanedTitle}`);
     },
     [initAudio, stopDemoTrack, triggerToast]
@@ -642,13 +673,19 @@ export default function App() {
   // Update driver mode status message
   useEffect(() => {
     if (driverMode === 'audio-fft') {
-      setDriverStatusText('罗素情绪自动萃取器 (FFT驱动中...)');
+      setDriverStatusText('情绪自动萃取器 (FFT驱动中...)');
     } else if (driverMode === 'interactive') {
       setDriverStatusText('手动交互定位 (鼠标拖拽中...)');
     } else {
       setDriverStatusText('外部集成数据终端 (数据联动中...)');
     }
   }, [driverMode]);
+
+  useEffect(() => {
+    viewZoomModeRef.current = viewZoomMode;
+    // 视角切换时重置轨迹，避免跨视口拉丝
+    moodHistoryRef.current = [];
+  }, [viewZoomMode]);
 
   // Interactive Drag & Click handling on Main Canvas
   const handleInteractiveCoord = useCallback((clientX: number, clientY: number) => {
@@ -658,9 +695,7 @@ export default function App() {
     const clickX = clientX - rect.left;
     const clickY = clientY - rect.top;
 
-    const cx = rect.width / 2;
-    const cy = (rect.height - 36) / 2 + 6;
-    const radius = Math.min(cx, cy) * 0.60;
+    const { cx, cy, radius } = getQuadrantViewport(rect.width, rect.height, viewZoomModeRef.current);
 
     const val = (clickX - cx) / radius;
     const ar = (cy - clickY) / radius;
@@ -863,59 +898,157 @@ export default function App() {
             setHudArousal(moodCoordRef.current.arousal.toFixed(2));
           }
 
-          const cx = w / 2;
-          const cy = (h - 36) / 2 + 6;
-          const radius = Math.min(cx, cy) * 0.60;
+          const isQ1Focus = viewZoomModeRef.current === 'q1-focus';
+          const { cx, cy, radius } = getQuadrantViewport(w, h, viewZoomModeRef.current);
 
           ctx.save();
-          // Circles
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.15)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-          ctx.arc(cx, cy, radius * 0.66, 0, Math.PI * 2);
-          ctx.arc(cx, cy, radius * 0.33, 0, Math.PI * 2);
-          ctx.stroke();
 
-          // Axis cross
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
-          ctx.setLineDash([4, 4]);
-          ctx.beginPath();
-          ctx.moveTo(cx - radius * 1.15, cy);
-          ctx.lineTo(cx + radius * 1.15, cy);
-          ctx.moveTo(cx, cy - radius * 1.15);
-          ctx.lineTo(cx, cy + radius * 1.15);
-          ctx.stroke();
-          ctx.setLineDash([]);
+          if (isQ1Focus) {
+            // ==================== 第一象限超清放大视口 ====================
+            // 1. 第一象限高光舞台背景微光
+            const q1StageGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 1.05);
+            q1StageGrad.addColorStop(0, 'rgba(234, 179, 8, 0.12)');
+            q1StageGrad.addColorStop(0.4, 'rgba(245, 158, 11, 0.05)');
+            q1StageGrad.addColorStop(0.85, 'rgba(239, 68, 68, 0.015)');
+            q1StageGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = q1StageGrad;
+            ctx.fillRect(cx - 20, 0, w - (cx - 20), cy + 20);
 
-          // Labels
-          ctx.fillStyle = 'rgba(226, 232, 240, 0.5)';
-          ctx.font = '10px "Share Tech Mono", monospace';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
+            // 2. 第一象限同心圆弧标尺 (0.2, 0.4, 0.6, 0.8, 1.0)
+            const rings = [0.2, 0.4, 0.6, 0.8, 1.0];
+            rings.forEach((rRatio) => {
+              const r = radius * rRatio;
+              ctx.strokeStyle = rRatio === 1.0 ? 'rgba(234, 179, 8, 0.4)' : 'rgba(234, 179, 8, 0.15)';
+              ctx.lineWidth = rRatio === 1.0 ? 1.5 : 1;
+              ctx.setLineDash(rRatio === 1.0 ? [] : [4, 5]);
+              ctx.beginPath();
+              // 第一象限圆弧：从 0 (右) 到 -PI/2 (上)
+              ctx.arc(cx, cy, r, -Math.PI * 0.5, 0);
+              ctx.stroke();
 
-          ctx.fillText('愉悦 + (VALENCE)', cx + radius * 0.85, cy - 12);
-          ctx.fillText('不愉悦 -', cx - radius * 0.85, cy - 12);
-          ctx.fillText('高唤醒 + (AROUSAL)', cx, cy - radius * 1.05);
-          ctx.fillText('低唤醒 -', cx, cy + radius * 1.05);
+              // 刻度数值
+              ctx.fillStyle = 'rgba(234, 179, 8, 0.55)';
+              ctx.font = '10px "Share Tech Mono", monospace';
+              ctx.textAlign = 'left';
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(`+${rRatio.toFixed(1)}`, cx + r + 4, cy - 6);
+            });
+            ctx.setLineDash([]);
 
-          // Quadrants (Russell 1980 情绪模型概括性标签)
-          ctx.font = '12px "Noto Sans SC", sans-serif';
-          ctx.fillStyle = 'rgba(234, 179, 8, 0.45)';
-          ctx.fillText('兴奋／喜悦', cx + radius * 0.5, cy - radius * 0.5);
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.45)';
-          ctx.fillText('紧张／愤怒', cx - radius * 0.5, cy - radius * 0.5);
-          ctx.fillStyle = 'rgba(168, 85, 247, 0.45)';
-          ctx.fillText('悲伤／低落', cx - radius * 0.5, cy + radius * 0.5);
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.45)';
-          ctx.fillText('平静／放松', cx + radius * 0.5, cy + radius * 0.5);
+            // 3. 45度角参考射线
+            ctx.strokeStyle = 'rgba(234, 179, 8, 0.12)';
+            ctx.setLineDash([3, 6]);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + Math.cos(Math.PI * 0.25) * radius * 1.05, cy - Math.sin(Math.PI * 0.25) * radius * 1.05);
+            ctx.stroke();
+            ctx.setLineDash([]);
 
+            // 4. 坐标轴 X 与 Y
+            // X轴 (效价)
+            ctx.strokeStyle = 'rgba(234, 179, 8, 0.6)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(cx - radius * 0.18, cy);
+            ctx.lineTo(cx + radius * 1.06, cy);
+            ctx.stroke();
+
+            // Y轴 (唤醒)
+            ctx.beginPath();
+            ctx.moveTo(cx, cy + radius * 0.18);
+            ctx.lineTo(cx, cy - radius * 1.06);
+            ctx.stroke();
+
+            // 轴箭头
+            ctx.fillStyle = 'rgba(234, 179, 8, 0.8)';
+            ctx.beginPath();
+            ctx.moveTo(cx + radius * 1.06 + 6, cy);
+            ctx.lineTo(cx + radius * 1.06, cy - 4);
+            ctx.lineTo(cx + radius * 1.06, cy + 4);
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - radius * 1.06 - 6);
+            ctx.lineTo(cx - 4, cy - radius * 1.06);
+            ctx.lineTo(cx + 4, cy - radius * 1.06);
+            ctx.fill();
+
+            // 轴标题标签
+            ctx.font = '11px "Share Tech Mono", "Noto Sans SC", sans-serif';
+            ctx.fillStyle = 'rgba(253, 224, 71, 0.85)';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+            ctx.fillText('效价 +VALENCE (愉悦·欢腾)', cx + radius * 1.02, cy + 8);
+
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText('唤醒 +AROUSAL (高昂·激昂)', cx + 10, cy - radius * 1.02);
+
+            // 负半轴微弱参考
+            ctx.fillStyle = 'rgba(148, 163, 184, 0.4)';
+            ctx.font = '9px "Share Tech Mono", monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText('-VALENCE', cx - 8, cy + 12);
+            ctx.textAlign = 'left';
+            ctx.fillText('-AROUSAL', cx + 8, cy + radius * 0.14);
+
+            // 第一象限主水印徽章
+            ctx.font = 'bold 13px "Noto Sans SC", sans-serif';
+            ctx.fillStyle = 'rgba(234, 179, 8, 0.55)';
+            ctx.textAlign = 'center';
+            ctx.fillText('【第一象限特写】：兴奋／喜悦 (革命激情·热烈昂扬)', cx + radius * 0.48, cy - radius * 0.48);
+          } else {
+            // ==================== 全景四象限标准视口 ====================
+            // Circles
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.15)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.arc(cx, cy, radius * 0.66, 0, Math.PI * 2);
+            ctx.arc(cx, cy, radius * 0.33, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Axis cross
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(cx - radius * 1.15, cy);
+            ctx.lineTo(cx + radius * 1.15, cy);
+            ctx.moveTo(cx, cy - radius * 1.15);
+            ctx.lineTo(cx, cy + radius * 1.15);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Labels
+            ctx.fillStyle = 'rgba(226, 232, 240, 0.5)';
+            ctx.font = '10px "Share Tech Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            ctx.fillText('愉悦 + (VALENCE)', cx + radius * 0.85, cy - 12);
+            ctx.fillText('不愉悦 -', cx - radius * 0.85, cy - 12);
+            ctx.fillText('高唤醒 + (AROUSAL)', cx, cy - radius * 1.05);
+            ctx.fillText('低唤醒 -', cx, cy + radius * 1.05);
+
+            // Quadrants
+            ctx.font = '12px "Noto Sans SC", sans-serif';
+            ctx.fillStyle = 'rgba(234, 179, 8, 0.45)';
+            ctx.fillText('兴奋／喜悦', cx + radius * 0.5, cy - radius * 0.5);
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.45)';
+            ctx.fillText('紧张／愤怒', cx - radius * 0.5, cy - radius * 0.5);
+            ctx.fillStyle = 'rgba(168, 85, 247, 0.45)';
+            ctx.fillText('悲伤／低落', cx - radius * 0.5, cy + radius * 0.5);
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.45)';
+            ctx.fillText('平静／放松', cx + radius * 0.5, cy + radius * 0.5);
+          }
+
+          // 核心目标坐标点
           const targetPx = cx + moodCoordRef.current.valence * radius;
           const targetPy = cy - moodCoordRef.current.arousal * radius;
 
-          // Trailing line
+          // Trailing line (轨迹平滑流光线)
           moodHistoryRef.current.push({ x: targetPx, y: targetPy });
-          if (moodHistoryRef.current.length > 40) moodHistoryRef.current.shift();
+          if (moodHistoryRef.current.length > 45) moodHistoryRef.current.shift();
 
           if (moodHistoryRef.current.length > 1) {
             ctx.beginPath();
@@ -931,13 +1064,13 @@ export default function App() {
               targetPy
             );
             trailGrad.addColorStop(0, 'rgba(239, 68, 68, 0)');
-            trailGrad.addColorStop(1, 'rgba(234, 179, 8, 0.6)');
+            trailGrad.addColorStop(1, 'rgba(234, 179, 8, 0.7)');
             ctx.strokeStyle = trailGrad;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2.5;
             ctx.stroke();
           }
 
-          // Particles
+          // Particles (凝聚态微粒群)
           particlesRef.current.forEach((p) => {
             p.update(targetPx, targetPy, audioData.energy, audioData.bass, audioData.speed);
             p.draw(
@@ -950,29 +1083,136 @@ export default function App() {
             );
           });
 
-          // Focus glow
-          const pulseRadius = 12 + Math.sin(gTime * 0.1) * 4 + audioData.bass * 8;
-          const focusGrad = ctx.createRadialGradient(
+          // ==================== 超醒目情绪能量球核心 (CORE ENERGY ORB) ====================
+          // 彻底解决“很多时候看不到这个球”的问题：放大球体尺寸、多重呼吸光晕、低音震荡冲击波、旋转准星与随动HUD标牌
+          const bassBoost = audioData.bass * 14;
+          const energyPulse = Math.sin(gTime * 0.12) * 5 + audioData.energy * 10;
+          const coreRadius = Math.max(12, 14 + bassBoost * 0.5); // 核心球实体半径 14px~21px (之前仅 3px)
+          const outerGlowRadius = Math.max(42, 48 + energyPulse + bassBoost); // 外部发光日冕 48px~72px
+
+          // 1. 外部大范围柔光电晕
+          const outerAuraGrad = ctx.createRadialGradient(
             targetPx,
             targetPy,
+            coreRadius * 0.4,
+            targetPx,
+            targetPy,
+            outerGlowRadius
+          );
+          if (moodCoordRef.current.valence >= 0 && moodCoordRef.current.arousal >= 0) {
+            outerAuraGrad.addColorStop(0, 'rgba(255, 240, 140, 0.95)');
+            outerAuraGrad.addColorStop(0.35, 'rgba(245, 158, 11, 0.55)');
+            outerAuraGrad.addColorStop(0.7, 'rgba(239, 68, 68, 0.25)');
+            outerAuraGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+          } else {
+            outerAuraGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+            outerAuraGrad.addColorStop(0.4, 'rgba(239, 68, 68, 0.5)');
+            outerAuraGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+          }
+          ctx.fillStyle = outerAuraGrad;
+          ctx.beginPath();
+          ctx.arc(targetPx, targetPy, outerGlowRadius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 2. 随重低音爆发的动态冲击波光环 (Shockwave Rings)
+          const shockwaveR = coreRadius + 14 + ((gTime * 35 + audioData.bass * 50) % 36);
+          ctx.strokeStyle = `rgba(255, 220, 90, ${Math.max(0, 0.7 - shockwaveR / 75)})`;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(targetPx, targetPy, shockwaveR, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // 3. 科技瞄准准星刻度环 (Target Reticle Ring)
+          ctx.save();
+          ctx.translate(targetPx, targetPy);
+          ctx.rotate(gTime * 0.04);
+          ctx.strokeStyle = 'rgba(255, 250, 200, 0.85)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([7, 7]);
+          ctx.beginPath();
+          ctx.arc(0, 0, coreRadius + 9, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 准星 4 个定向外伸指针
+          for (let a = 0; a < 4; a++) {
+            const rot = (Math.PI / 2) * a;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(rot) * (coreRadius + 6), Math.sin(rot) * (coreRadius + 6));
+            ctx.lineTo(Math.cos(rot) * (coreRadius + 15), Math.sin(rot) * (coreRadius + 15));
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          // 4. 内部高密度发光球体 (Solid Core Sphere)
+          const coreGrad = ctx.createRadialGradient(
+            targetPx - coreRadius * 0.25,
+            targetPy - coreRadius * 0.25,
             0,
             targetPx,
             targetPy,
-            pulseRadius * 2
+            coreRadius
           );
-          focusGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-          focusGrad.addColorStop(0.3, 'rgba(239, 68, 68, 0.6)');
-          focusGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
-
-          ctx.fillStyle = focusGrad;
+          coreGrad.addColorStop(0, '#FFFFFF');
+          coreGrad.addColorStop(0.45, '#FEF08A');
+          coreGrad.addColorStop(0.8, '#F59E0B');
+          coreGrad.addColorStop(1, '#DC2626');
+          ctx.fillStyle = coreGrad;
           ctx.beginPath();
-          ctx.arc(targetPx, targetPy, pulseRadius * 2, 0, Math.PI * 2);
+          ctx.arc(targetPx, targetPy, coreRadius, 0, Math.PI * 2);
           ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2.2;
+          ctx.stroke();
 
-          ctx.fillStyle = PRESETS[presetRef.current].brightStar;
+          // 5. 随动高亮 HUD 指示标牌 (确保用户任何时候都能直接定位球体与坐标)
+          const badgeW = 96;
+          const badgeH = 26;
+          // 防止右侧或顶部贴边溢出
+          const badgeX = targetPx + badgeW + 20 > w ? targetPx - badgeW - 14 : targetPx + coreRadius + 14;
+          const badgeY = targetPy - 13 < 10 ? 12 : targetPy - 13;
+
+          // 背景胶囊
+          ctx.fillStyle = 'rgba(10, 15, 29, 0.88)';
+          ctx.strokeStyle = 'rgba(234, 179, 8, 0.7)';
+          ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.arc(targetPx, targetPy, 3, 0, Math.PI * 2);
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
           ctx.fill();
+          ctx.stroke();
+
+          // 连线
+          ctx.strokeStyle = 'rgba(234, 179, 8, 0.6)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          if (badgeX > targetPx) {
+            ctx.moveTo(targetPx + coreRadius + 3, targetPy);
+            ctx.lineTo(badgeX, badgeY + badgeH / 2);
+          } else {
+            ctx.moveTo(targetPx - coreRadius - 3, targetPy);
+            ctx.lineTo(badgeX + badgeW, badgeY + badgeH / 2);
+          }
+          ctx.stroke();
+
+          // 文字
+          ctx.font = 'bold 9px "Share Tech Mono", "Noto Sans SC", sans-serif';
+          ctx.fillStyle = '#FDE047';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          const moodName =
+            moodCoordRef.current.valence >= 0
+              ? moodCoordRef.current.arousal >= 0
+                ? 'Q1 兴奋/喜悦'
+                : 'Q4 平静/放松'
+              : moodCoordRef.current.arousal >= 0
+              ? 'Q2 紧张/愤怒'
+              : 'Q3 悲伤/低落';
+          ctx.fillText(`● ${moodName}`, badgeX + 6, badgeY + 4);
+
+          ctx.font = '8px "Share Tech Mono", monospace';
+          ctx.fillStyle = '#94A3B8';
+          const signV = moodCoordRef.current.valence >= 0 ? '+' : '';
+          const signA = moodCoordRef.current.arousal >= 0 ? '+' : '';
+          ctx.fillText(`V:${signV}${moodCoordRef.current.valence.toFixed(2)} A:${signA}${moodCoordRef.current.arousal.toFixed(2)}`, badgeX + 6, badgeY + 15);
 
           ctx.restore();
         }
@@ -1574,7 +1814,7 @@ export default function App() {
 
       {/* 主体区域 */}
       <main id="app-main" className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 relative z-10">
-        {/* 左侧/中央：主视觉：罗素情绪环状数轴与凝聚粒子团 */}
+        {/* 左侧/中央：主视觉：情绪环状数轴与凝聚粒子团 */}
         <section
           id="main-visualizer-section"
           className="lg:col-span-8 flex flex-col bg-slate-950/40 border border-slate-900/60 rounded-xl overflow-hidden relative border-glow min-h-[580px] lg:min-h-[640px]"
@@ -1612,14 +1852,14 @@ export default function App() {
           <div className="absolute inset-0 p-4 sm:p-6 flex flex-col justify-between pointer-events-none z-10">
             {/* 左上：曲目与分析状态 */}
             <div className="flex justify-between items-start">
-              <div>
+              <div className="bg-slate-950/80 backdrop-blur-md px-3.5 py-2.5 rounded-xl border border-slate-900/90 shadow-lg pointer-events-auto max-w-fit">
                 <div
-                  className="text-2xl font-bold tracking-widest text-slate-100 flex items-center gap-2"
+                  className="text-base sm:text-lg font-bold tracking-wider text-slate-100 flex items-center gap-2"
                   id="track-title"
                 >
                   {trackTitle}
                 </div>
-                <div className="text-xs text-red-400/80 mt-1 flex items-center space-x-2">
+                <div className="text-xs text-red-400/80 mt-0.5 flex items-center space-x-2">
                   <span className="tech-font inline-block bg-red-950/40 border border-red-800/40 px-1.5 py-0.5 rounded">
                     RUSSELL MAP
                   </span>
@@ -1627,25 +1867,67 @@ export default function App() {
                     {driverStatusText}
                   </span>
                 </div>
-                <div className="text-[10px] text-slate-500/80 tracking-wider mt-1.5">
+                <div className="text-[10px] text-slate-500/80 tracking-wider mt-1">
                   [ 提示：切换到“交互拖拽模式”后，可在坐标轴内任意点击/拖动星团定位情绪 ]
                 </div>
               </div>
 
-              {/* 实时数值看板 */}
-              <div className="bg-slate-900/80 backdrop-blur-md p-2 rounded border border-slate-800 text-right font-mono text-[11px] space-y-0.5">
-                <div className="text-[9px] text-slate-500 tracking-widest">罗素情绪矢量</div>
-                <div>
-                  <span className="text-slate-400">效价 (Valence): </span>
-                  <span className="text-cyan-400" id="hud-valence">
-                    {hudValence}
-                  </span>
+              {/* 右上控制区：视角切换与实时数值看板 */}
+              <div className="flex flex-col items-end gap-2 pointer-events-auto">
+                {/* 象限放大模式切换器 */}
+                <div className="bg-slate-900/90 backdrop-blur-md p-1 rounded-lg border border-slate-800 flex items-center gap-1 shadow-lg">
+                  <button
+                    id="btn-view-q1"
+                    onClick={() => {
+                      setViewZoomMode('q1-focus');
+                      triggerToast('已聚焦放大第一象限（兴奋/喜悦区），球体超清特写');
+                    }}
+                    className={`px-2.5 py-1 text-xs rounded font-medium transition-all flex items-center gap-1 cursor-pointer ${
+                      viewZoomMode === 'q1-focus'
+                        ? 'bg-amber-500/25 text-amber-300 border border-amber-500/60 shadow-sm shadow-amber-500/20'
+                        : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                    }`}
+                    title="将第一象限（兴奋/喜悦）作为主舞台放大显示，情绪球大幅放大清晰可见"
+                  >
+                    <span>🔍 第一象限放大</span>
+                  </button>
+                  <button
+                    id="btn-view-all"
+                    onClick={() => {
+                      setViewZoomMode('all');
+                      triggerToast('已切换至标准全局四象限视野');
+                    }}
+                    className={`px-2.5 py-1 text-xs rounded font-medium transition-all flex items-center gap-1 cursor-pointer ${
+                      viewZoomMode === 'all'
+                        ? 'bg-red-950/70 text-red-300 border border-red-700/60 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                    }`}
+                    title="显示完整四象限全景视图"
+                  >
+                    <span>🌐 全局全景</span>
+                  </button>
                 </div>
-                <div>
-                  <span className="text-slate-400">唤醒 (Arousal): </span>
-                  <span className="text-red-400" id="hud-arousal">
-                    {hudArousal}
-                  </span>
+
+                {/* 实时数值看板 */}
+                <div className="bg-slate-900/80 backdrop-blur-md p-2 rounded border border-slate-800 text-right font-mono text-[11px] space-y-0.5 min-w-[140px]">
+                  <div className="text-[9px] text-slate-500 tracking-widest flex items-center justify-between">
+                    <span>情绪实时计算</span>
+                    <span className="text-[8px] text-amber-400/80 px-1 py-0.2 bg-amber-950/40 rounded border border-amber-800/40">
+                      {viewZoomMode === 'q1-focus' ? 'Q1特写' : '全局'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">效价 (Valence): </span>
+                    <span className="text-cyan-400 font-bold" id="hud-valence">
+                      {hudValence}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">唤醒 (Arousal): </span>
+                    <span className="text-red-400 font-bold" id="hud-arousal">
+                      {hudArousal}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1915,7 +2197,7 @@ export default function App() {
           </span>
         </div>
         <div>
-          <span>大别山红色革命文化数字化艺术重构实验室 © 2026</span>
+          <span>大别山经典红色民歌原声情绪空间实时转译</span>
         </div>
       </footer>
 
