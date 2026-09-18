@@ -194,18 +194,19 @@ declare global {
   }
 }
 
-// 象限几何视口计算工具：根据模式提供全景或第一象限大幅放大几何参数，严格避让顶部标题区
+// 象限几何视口计算工具：根据模式提供全景或第一象限大幅放大几何参数，严格避让顶部标题与底部控制条
 function getQuadrantViewport(w: number, h: number, mode: 'q1-focus' | 'all') {
-  // 顶部安全避让线（左上角标题与状态卡片高度约 80~95px，预留 128px 纯净空高）
-  const topSafeY = 128;
-  const bottomMargin = 55;
+  // 顶部安全避让线（左上角标题与状态卡片高度约 80~95px，预留 125px 纯净空高）
+  const topSafeY = 125;
+  // 底部安全避让线（底部控制条高度约 48px + 边距，预留 105px 确保原点与情绪球悬浮在控制条上方，彻底不被遮挡）
+  const bottomMargin = 105;
 
   if (mode === 'q1-focus') {
-    // 第一象限放大视口：原点置于左下偏内侧，X留足负轴刻度余量，Y留足底部控制条余量
-    const cx = Math.max(85, Math.min(140, w * 0.12));
+    // 第一象限放大视口：原点置于左下偏内侧，X留足负轴刻度余量，Y严格置于底部控制条之上
+    const cx = Math.max(90, Math.min(150, w * 0.13));
     const cy = Math.max(topSafeY + 120, h - bottomMargin);
 
-    // 计算 Y 方向最大可用半径：确保最高点 cy - radius * 1.06 严格 >= topSafeY，彻底不被顶部标题遮挡
+    // 计算 Y 方向最大可用半径：确保最高点 cy - radius * 1.06 严格 >= topSafeY，不被顶部标题遮挡
     const maxRadiusY = (cy - topSafeY) / 1.06;
     // 计算 X 方向最大可用半径：确保右侧保留余量
     const maxRadiusX = (w - cx - 55) / 1.06;
@@ -213,10 +214,10 @@ function getQuadrantViewport(w: number, h: number, mode: 'q1-focus' | 'all') {
     const radius = Math.max(90, Math.min(maxRadiusX, maxRadiusY));
     return { cx, cy, radius };
   } else {
-    // 全景四象限标准视口：同样保证最高点避让顶部标题
+    // 全景四象限标准视口：同样保证最高点与底部避让
     const cx = w / 2;
-    // 原点垂直居中略偏下，让顶部有足够呼吸感避开标题
-    const cy = Math.max(topSafeY + 110, (h + topSafeY - bottomMargin) / 2);
+    // 原点垂直居中略偏下，让顶部有足够呼吸感避开标题，底部避开控制条
+    const cy = Math.max(topSafeY + 100, (h + topSafeY - bottomMargin) / 2);
     const maxRadiusY = (cy - topSafeY) / 1.15;
     const radius = Math.max(80, Math.min(cx * 0.65, maxRadiusY));
     return { cx, cy, radius };
@@ -1908,68 +1909,66 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* 实时数值看板 */}
-                <div className="bg-slate-900/80 backdrop-blur-md p-2 rounded border border-slate-800 text-right font-mono text-[11px] space-y-0.5 min-w-[140px]">
-                  <div className="text-[9px] text-slate-500 tracking-widest flex items-center justify-between">
-                    <span>情绪实时计算</span>
-                    <span className="text-[8px] text-amber-400/80 px-1 py-0.2 bg-amber-950/40 rounded border border-amber-800/40">
+                {/* 实时数值看板：情绪与声学综合监控（集中在右上角，彻底放空左下角） */}
+                <div className="bg-slate-950/85 backdrop-blur-md p-2.5 rounded-xl border border-slate-800 text-right font-mono text-[11px] space-y-1.5 shadow-xl min-w-[200px]">
+                  <div className="text-[9px] text-slate-500 tracking-widest flex items-center justify-between border-b border-slate-800/80 pb-1">
+                    <span className="text-slate-400 font-sans font-medium flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                      情绪实时计算
+                    </span>
+                    <span className="text-[8px] text-amber-400/90 px-1 py-0.2 bg-amber-950/40 rounded border border-amber-800/40">
                       {viewZoomMode === 'q1-focus' ? 'Q1特写' : '全局'}
                     </span>
                   </div>
-                  <div>
-                    <span className="text-slate-400">效价 (Valence): </span>
-                    <span className="text-cyan-400 font-bold" id="hud-valence">
-                      {hudValence}
-                    </span>
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">效价 (Valence): </span>
+                      <span className="text-cyan-400 font-bold" id="hud-valence">
+                        {hudValence}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">唤醒 (Arousal): </span>
+                      <span className="text-red-400 font-bold" id="hud-arousal">
+                        {hudArousal}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-slate-400">唤醒 (Arousal): </span>
-                    <span className="text-red-400 font-bold" id="hud-arousal">
-                      {hudArousal}
-                    </span>
+
+                  {/* 信号参量四维监控（移至右上角，杜绝遮挡左下象限与原点） */}
+                  <div className="border-t border-slate-800/80 pt-1.5 text-[10px] space-y-0.5">
+                    <div className="text-[9px] text-slate-500 tracking-wider text-left uppercase flex items-center justify-between">
+                      <span>信号参量</span>
+                      <span className="w-1 h-1 rounded-full bg-red-500/80"></span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 pt-0.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">BASS</span>
+                        <span className="text-red-400 font-bold" id="val-bass">{bassVal}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">MID</span>
+                        <span className="text-yellow-500 font-bold" id="val-mid">{midVal}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">TREBLE</span>
+                        <span className="text-pink-400 font-bold" id="val-treble">{trebleVal}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">ENERGY</span>
+                        <span className="text-orange-500 font-bold" id="val-energy">{energyVal}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* 左下：音频基本参数实时看板 与 右下角标（添加mb-16与控制条垂直错开，杜绝叠压） */}
-            <div className="flex justify-between items-end mb-16 sm:mb-20">
-              <div className="space-y-1 bg-slate-950/75 backdrop-blur-md p-2.5 sm:p-3 rounded-lg border border-slate-900/80 pointer-events-auto shadow-xl">
-                <div className="text-[10px] text-slate-500 tracking-widest uppercase border-b border-slate-800/80 pb-1 mb-1.5 flex items-center justify-between">
-                  <span>信号参量</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500/80 animate-pulse"></span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-4 sm:gap-x-6 gap-y-1 text-xs font-mono">
-                  <div className="flex justify-between space-x-2 sm:space-x-4">
-                    <span className="text-slate-400">BASS (鼓点低频)</span>
-                    <span className="text-red-400 text-right min-w-[2.5rem]" id="val-bass">
-                      {bassVal}
-                    </span>
-                  </div>
-                  <div className="flex justify-between space-x-2 sm:space-x-4">
-                    <span className="text-slate-400">MID (人声中频)</span>
-                    <span className="text-yellow-500 text-right min-w-[2.5rem]" id="val-mid">
-                      {midVal}
-                    </span>
-                  </div>
-                  <div className="flex justify-between space-x-2 sm:space-x-4">
-                    <span className="text-slate-400">TREBLE (高频乐器)</span>
-                    <span className="text-pink-400 text-right min-w-[2.5rem]" id="val-treble">
-                      {trebleVal}
-                    </span>
-                  </div>
-                  <div className="flex justify-between space-x-2 sm:space-x-4">
-                    <span className="text-slate-400">ENERGY (革命斗志)</span>
-                    <span className="text-orange-500 text-right min-w-[2.5rem]" id="val-energy">
-                      {energyVal}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
+            {/* 底部状态（左下完全腾空，仅在右下角保留轻量状态徽标，杜绝遮挡象限原点与负轴） */}
+            <div className="flex justify-end items-end mb-16 sm:mb-20 pointer-events-none">
               {/* 动态状态角标 */}
-              <div className="flex flex-col items-end text-right pointer-events-auto">
-                <span className="text-[10px] text-slate-500 tech-font">RUSSELL ENGINE v3.1</span>
+              <div className="flex flex-col items-end text-right pointer-events-auto bg-slate-950/60 backdrop-blur-sm px-2 py-1 rounded border border-slate-900/60">
+                <span className="text-[9px] text-slate-500 tech-font">RUSSELL ENGINE v3.1</span>
                 <span
                   className="text-xs text-red-500 font-bold tracking-wider tech-font"
                   id="live-status"
@@ -1980,10 +1979,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* 控制条（悬浮底部：精雕细琢的声学控制坞，杜绝溢出与多余滚动条） */}
+          {/* 控制条（悬浮底部：精雕细琢的声学控制坞，杜绝遮挡主舞台象限） */}
           <div
             id="floating-controls"
-            className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 bg-slate-950/90 backdrop-blur-xl px-3 sm:px-5 py-2 rounded-2xl sm:rounded-full border border-slate-800/80 flex items-center gap-2 sm:gap-3.5 lg:gap-4 shadow-[0_14px_36px_rgba(0,0,0,0.85),0_0_20px_rgba(239,68,68,0.08)] pointer-events-auto z-20 max-w-[96%] select-none shrink-0"
+            className="absolute bottom-2.5 sm:bottom-3 left-1/2 -translate-x-1/2 bg-slate-950/90 backdrop-blur-xl px-3 sm:px-4 py-1.5 rounded-2xl sm:rounded-full border border-slate-800/80 flex items-center gap-2 sm:gap-3.5 lg:gap-4 shadow-[0_14px_36px_rgba(0,0,0,0.85),0_0_20px_rgba(239,68,68,0.08)] pointer-events-auto z-20 max-w-[96%] select-none shrink-0"
           >
             {/* 播放/暂停 */}
             <button
